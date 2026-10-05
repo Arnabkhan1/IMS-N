@@ -1,0 +1,6 @@
+{
+  "name": "Apex IMS - Institute Management System",
+  "description": "Comprehensive single-institute management system with role-based access for Admin, Teacher, Accountant, and Student. Modules for attendance, billing, routine, exams, roadmaps, and due reminders.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

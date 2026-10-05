@@ -1,0 +1,396 @@
+// Prisma Schema for Single-Institute Management System (IMS)
+// Database: PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  TEACHER
+  ACCOUNTANT
+  STUDENT
+}
+
+enum StudentStatus {
+  ACTIVE
+  PASSED
+  DROPPED
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  LEAVE
+}
+
+enum InvoiceStatus {
+  DUE
+  PARTIAL
+  PAID
+}
+
+enum PaymentMethod {
+  UPI
+  CASH
+  BANK
+  GPAY
+  CARD
+}
+
+enum ReminderChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+}
+
+enum ReminderStatus {
+  SENT
+  FAILED
+  PENDING
+}
+
+// 1. Users table (for authentication & role checking)
+model User {
+  id           String        @id @default(uuid())
+  email        String        @unique
+  passwordHash String
+  name         String
+  role         Role          @default(STUDENT)
+  avatarUrl    String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  // 1-to-1 links to Student or Instructor profiles
+  student      Student?
+  instructor   Instructor?
+
+  @@map("users")
+}
+
+// 2. Guardians table
+model Guardian {
+  id           String    @id @default(uuid())
+  name         String
+  phone        String
+  relationship String    // Father, Mother, Guardian
+  email        String?
+  occupation   String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  students     Student[]
+
+  @@map("guardians")
+}
+
+// 3. Students table (supports soft-delete with deletedAt)
+model Student {
+  id            String        @id @default(uuid())
+  userId        String?       @unique
+  user          User?         @relation(fields: [userId], references: [id])
+  guardianId    String?
+  guardian      Guardian?     @relation(fields: [guardianId], references: [id])
+
+  name          String
+  studentRoll   String        @unique
+  email         String        @unique
+  phone         String
+  dateOfBirth   DateTime?
+  gender        String?
+  address       String?
+  admissionDate DateTime      @default(now())
+  status        StudentStatus @default(ACTIVE)
+  deletedAt     DateTime?     // Soft delete timestamp
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  enrollments   Enrollment[]
+  attendance    StudentAttendance[]
+  invoices      Invoice[]
+  examResults   ExamResult[]
+  topicProgress StudentTopicProgress[]
+  reminders     Reminder[]
+
+  @@map("students")
+}
+
+// 4. Instructors / Teachers table
+model Instructor {
+  id          String        @id @default(uuid())
+  userId      String?       @unique
+  user        User?         @relation(fields: [userId], references: [id])
+
+  name        String
+  email       String        @unique
+  phone       String
+  designation String
+  department  String
+  joiningDate DateTime      @default(now())
+  status      String        @default("Active")
+  bio         String?
+
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  batches     Batch[]
+  attendance  TeacherAttendance[]
+
+  @@map("instructors")
+}
+
+// 5. Courses table
+model Course {
+  id              String    @id @default(uuid())
+  code            String    @unique
+  title           String
+  description     String
+  durationWeeks   Int
+  totalFee        Decimal   @db.Decimal(10, 2)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  batches         Batch[]
+  roadmaps        Roadmap[]
+
+  @@map("courses")
+}
+
+// 6. Batches table
+model Batch {
+  id           String    @id @default(uuid())
+  courseId     String
+  course       Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  instructorId String
+  instructor   Instructor @relation(fields: [instructorId], references: [id])
+
+  name         String
+  batchCode    String    @unique
+  seatLimit    Int
+  startDate    DateTime
+  endDate      DateTime?
+  status       String    @default("Ongoing") // Upcoming, Ongoing, Completed
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  schedules    Schedule[]
+  enrollments  Enrollment[]
+  attendance   StudentAttendance[]
+  exams        Exam[]
+  invoices     Invoice[]
+
+  @@map("batches")
+}
+
+// 7. Enrollments (Many-to-Many between Students & Batches)
+model Enrollment {
+  id         String    @id @default(uuid())
+  studentId  String
+  student    Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  batchId    String
+  batch      Batch     @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  enrolledAt DateTime  @default(now())
+  status     String    @default("Enrolled") // Enrolled, Completed, Dropped
+
+  invoices   Invoice[]
+
+  @@unique([studentId, batchId])
+  @@map("enrollments")
+}
+
+// 8. Schedules table (routine for batches)
+model Schedule {
+  id        String   @id @default(uuid())
+  batchId   String
+  batch     Batch    @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  dayOfWeek String   // Sun, Mon, Tue, Wed, Thu, Fri, Sat
+  startTime String   // e.g. "10:00 AM"
+  endTime   String   // e.g. "11:30 AM"
+  roomNumber String
+
+  @@map("schedules")
+}
+
+// 9. Student Attendance table
+model StudentAttendance {
+  id         String           @id @default(uuid())
+  batchId    String
+  batch      Batch            @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  studentId  String
+  student    Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  date       DateTime         @db.Date
+  status     AttendanceStatus @default(PRESENT)
+  remarks    String?
+  recordedBy String?
+
+  @@unique([batchId, studentId, date])
+  @@map("student_attendance")
+}
+
+// 10. Teacher Attendance table
+model TeacherAttendance {
+  id           String           @id @default(uuid())
+  instructorId String
+  instructor   Instructor       @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+
+  date         DateTime         @db.Date
+  status       AttendanceStatus @default(PRESENT)
+  checkInTime  String?
+  checkOutTime String?
+  remarks      String?
+
+  @@unique([instructorId, date])
+  @@map("teacher_attendance")
+}
+
+// 11. Invoices table
+model Invoice {
+  id           String        @id @default(uuid())
+  invoiceNo    String        @unique
+  enrollmentId String
+  enrollment   Enrollment    @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  studentId    String
+  student      Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  batchId      String
+  batch        Batch         @relation(fields: [batchId], references: [id])
+
+  title        String
+  amount       Decimal       @db.Decimal(10, 2)
+  paidAmount   Decimal       @default(0) @db.Decimal(10, 2)
+  dueDate      DateTime
+  issueDate    DateTime      @default(now())
+  status       InvoiceStatus @default(DUE)
+
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  payments     Payment[]
+  reminders    Reminder[]
+
+  @@map("invoices")
+}
+
+// 12. Payments table
+model Payment {
+  id            String        @id @default(uuid())
+  receiptNo     String        @unique
+  invoiceId     String
+  invoice       Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  amount        Decimal       @db.Decimal(10, 2)
+  paymentDate   DateTime      @default(now())
+  paymentMethod PaymentMethod @default(CASH)
+  transactionId String?
+  receivedBy    String
+  notes         String?
+
+  @@map("payments")
+}
+
+// 13. Exams table
+model Exam {
+  id         String       @id @default(uuid())
+  batchId    String
+  batch      Batch        @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  title      String
+  examDate   DateTime
+  totalMarks Int          @default(100)
+  passMarks  Int          @default(40)
+  type       String       @default("Midterm") // Quiz, Midterm, Final, Project
+
+  results    ExamResult[]
+
+  @@map("exams")
+}
+
+// 14. Exam Results table
+model ExamResult {
+  id            String   @id @default(uuid())
+  examId        String
+  exam          Exam     @relation(fields: [examId], references: [id], onDelete: Cascade)
+  studentId     String
+  student       Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  marksObtained Decimal  @db.Decimal(5, 2)
+  grade         String
+  feedback      String?
+  publishedAt   DateTime @default(now())
+
+  @@unique([examId, studentId])
+  @@map("results")
+}
+
+// 15. Roadmaps table
+model Roadmap {
+  id          String         @id @default(uuid())
+  courseId    String
+  course      Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+
+  topics      RoadmapTopic[]
+
+  @@map("roadmaps")
+}
+
+// 16. Roadmap Topics table
+model RoadmapTopic {
+  id          String                 @id @default(uuid())
+  roadmapId   String
+  roadmap     Roadmap                @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
+
+  orderIndex  Int
+  weekNumber  Int
+  title       String
+  description String?
+
+  progress    StudentTopicProgress[]
+
+  @@map("roadmap_topics")
+}
+
+// 17. Student Topic Progress
+model StudentTopicProgress {
+  id          String       @id @default(uuid())
+  studentId   String
+  student     Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  topicId     String
+  topic       RoadmapTopic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  isCompleted Boolean      @default(false)
+  completedAt DateTime?
+
+  @@unique([studentId, topicId])
+  @@map("student_topic_progress")
+}
+
+// 18. Reminders table (logs sent reminders so nothing is sent twice)
+model Reminder {
+  id               String          @id @default(uuid())
+  invoiceId        String
+  invoice          Invoice         @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  studentId        String
+  student          Student         @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  channel          ReminderChannel @default(SMS)
+  status           ReminderStatus  @default(SENT)
+  sentAt           DateTime        @default(now())
+  recipientContact String
+  messageBody      String
+  triggerType      String          @default("Automated") // Pre-Due, Overdue, Manual
+
+  @@map("reminders")
+}
